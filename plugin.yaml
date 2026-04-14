@@ -1,0 +1,3 @@
+name: wakeup
+version: 0.1.0
+description: Auto-inject DIARY (last 3 days), MEMORY (full), and inbox summary at session start.
