@@ -215,15 +215,42 @@ def on_session_start(**kwargs):
         logger.exception("wakeup: payload build failed")
 
 
+_injected_sessions: set[str] = set()
+
+
 def pre_llm_call(session_id=None, user_message=None, is_first_turn=False, **kwargs):
-    """Inject cached payload on the first turn only."""
+    """Inject wakeup context on the first LLM call of each session.
+
+    Tracks which sessions have already received the payload so we
+    inject exactly once per session, regardless of whether
+    on_session_start fired (it doesn't fire on session continuation)
+    or whether the gateway passed conversation history.
+    """
     global _cached_payload
-    if not is_first_turn:
+
+    sid = session_id or ""
+    if sid in _injected_sessions:
         return None
+
+    logger.info("wakeup: pre_llm_call fired (session=%s, is_first_turn=%s, has_payload=%s)",
+                sid, is_first_turn, bool(_cached_payload))
+
+    # Build payload on-demand if on_session_start didn't fire
+    # (e.g. gateway restart continuing an existing session)
     if not _cached_payload:
-        return None
+        logger.info("wakeup: no cached payload, building on-demand")
+        try:
+            _cached_payload = _build_payload()
+            logger.info("wakeup: on-demand payload built (%d chars)", len(_cached_payload))
+        except Exception as e:
+            logger.warning("wakeup: on-demand build failed: %s", e)
+            _injected_sessions.add(sid)
+            return None
+
     payload = _cached_payload
-    _cached_payload = None  # belt-and-suspenders: don't re-inject
+    _cached_payload = None
+    _injected_sessions.add(sid)
+    logger.info("wakeup: injecting payload (%d chars) for session %s", len(payload), sid)
     return {"context": payload}
 
 
